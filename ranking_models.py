@@ -178,7 +178,7 @@ BATCH_SIZE = 128
 EPOCHS = 30
 
 #Score Model
-#score_model = score_model(input_shape)
+#score_model = score_model()
 #score_model.compile(optimizer = 'adam', loss = 'mean_squared_error', metrics = ['accuracy'])
 #score_model.fit(X, y, batch_size = BATCH_SIZE, epochs = EPOCHS, validation_split = 0.1)
 
