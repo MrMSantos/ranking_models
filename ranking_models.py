@@ -36,10 +36,10 @@ def classifier_svc(X, y):
 
 	return model
 
-def score_model(input_shape):
+def score_model():
 
 	model = Sequential()
-	model.add(Dense(1024, activation = 'relu', input_dim = input_shape))
+	model.add(Dense(1024, activation = 'relu'))
 	model.add(BatchNormalization())
 	model.add(Dropout(0.1))
 	model.add(Dense(512, activation = 'relu'))
@@ -57,7 +57,7 @@ def score_model(input_shape):
 
 def rank_model(input_shape):
 
-	model = score_model(input_shape)
+	model = score_model()
 
 	rel_docs = Input(shape = (input_shape, ))
 	irr_docs = Input(shape = (input_shape, ))
