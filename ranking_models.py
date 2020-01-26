@@ -18,11 +18,19 @@ from keras.layers import Dense, Dropout, BatchNormalization, Input, Add, Subtrac
 #Load Language Model
 nlp = spacy.load("en_trf_bertbaseuncased_lg")
 
-def bert_tokens(sentence):
+def bert_tokens(query, document):
+
+	if query[-1] not in ['.', '?']:
+		query += '.'
+	document = document.replace('\t', '')
+	document = document.replace('\n', '')
+	sentence = query + ' ' + document
+
 	bert_transf = nlp(sentence)
 	first_token = bert_transf._.trf_last_hidden_state[0]
 	last_token = bert_transf._.trf_last_hidden_state[-1]
 	token = np.concatenate([first_token, last_token])
+
 	return token
 
 def classifier_svc(X, y):
@@ -66,14 +74,14 @@ def rank_model(input_shape):
 
 	added = Add()([rel_docs_y, irr_docs_y])
 	diff = Lambda(lambda x: 1 - x, output_shape = (1, ))(added)
-	y_new = Activation('sigmoid')(diff)
+	y_new = Activation('tanh')(diff)
 
 	rank_model = Model(inputs = [rel_docs, irr_docs], outputs = y_new)
 
 	return rank_model
 
-
 def import_model(model):
+
 	weights = model.get_weights()
 	solr_model = {'name' : 'my_ranknet_model',
 				'class' : 'org.apache.solr.ltr.model.NeuralNetworkModel',
@@ -100,89 +108,82 @@ def import_model(model):
 	with open('my_ranknet_model.json', 'w') as out:
 		json.dump(solr_model, out, indent = 4)
 
+def training_set(docs_returned, topics_date):
 
-DOCS_RETURNED = 50
-DATASET = 'gov'
-TOPICS_DATE = ['2002', '2003', '2004']
+	#X = []
+	X_rel = []
+	X_irr = []
+	y = []
 
-print('RETURNING', DOCS_RETURNED, 'DOCUMENTS')
-
-X = []
-X_rel = []
-X_irr = []
-y = []
-
-for TOPICS in TOPICS_DATE:
-#Load topics dictionary
-	with open('topics/topics_' + TOPICS + '.pickle', 'rb') as f:
-		topics = pickle.load(f)
-		TOPICS_TOTAL = len(topics)
-	with open('topics/qrels_' + TOPICS + '.pickle', 'rb') as f:
-		qrel = pickle.load(f)
-	print('YEAR:', TOPICS)
-	#Feature Extraction
-	for query in topics:
-		url = 'http://localhost:8983/solr/' + DATASET
-		url += '/query?q={0}'.format(topics[query])
-		url += '&rq={{!ltr model=my_model efi.text=\"{0}\"}}'.format(topics[query])
-		url += '&fl=id,score,title,[features]&rows={0}&q.op=OR'.format(DOCS_RETURNED)
-		response = requests.request('GET', url)
-
-		try:
+	for TOPICS in topics_date:
+	#Load topics dictionary
+		with open('topics/topics_' + TOPICS + '.pickle', 'rb') as f:
+			topics = pickle.load(f)
+			TOPICS_TOTAL = len(topics)
+		with open('topics/qrels_' + TOPICS + '.pickle', 'rb') as f:
+			qrel = pickle.load(f)
+		print('YEAR:', TOPICS)
+		#Feature Extraction
+		for query in topics:
+			url = 'http://localhost:8983/solr/gov'
+			url += '/query?q={0}'.format(topics[query])
+			url += '&rq={{!ltr model=my_model efi.text=\"{0}\"}}'.format(topics[query])
+			url += '&fl=id,score,title,[features]&rows={0}&q.op=OR'.format(docs_returned)
+			response = requests.request('GET', url)
 			response_json = simplejson.loads(response.text)
-		except simplejson.JSONDecodeError:
-			print('ERROR JSON')
-		if "error" in response_json:
-			print('ERROR JSON')
 
-		for (rank, document) in enumerate(response_json['response']['docs']):
-			doc = document['id'][-19:-5]
+			for (rank, document) in enumerate(response_json['response']['docs']):
+				doc = document['id'][-19:-5]
+				query_text = topics[query]
 
-			#Feature Extraction BERT
-			if 'title' in document:
-				title_text = document['title'][0]
-			else:
-				title_text = ''
-			query_text = topics[query]
-			
-			if query_text[-1] not in ['.', '?']:
-				query_text += '.'
-			title_text = title_text.replace('\t', '')
-			title_text = title_text.replace('\n', '')
-			pair_query_doc = query_text + ' ' + title_text
-			'''
-			token = bert_tokens(pair_query_doc)
-			X.append(token)
-			if doc in qrel[query]:
-				y.append(qrel[query][doc])
-			else:
-				y.append(0)'''
-			
-			if doc in qrel[query] and qrel[query][doc] == 1:
-				token = bert_tokens(pair_query_doc)
-				X_rel.append(token)
-				y.append(1)
-			elif len(X_rel) > len(X_irr):
-				token = bert_tokens(pair_query_doc)
-				X_irr.append(token)
+				#Feature Extraction BERT
+				if 'title' in document:
+					title_text = document['title'][0]
+				else:
+					title_text = ''
+				
+				'''
+				token = bert_tokens(query_text, title_text)
+				X.append(token)
+				if doc in qrel[query]:
+					y.append(qrel[query][doc])
+				else:
+					y.append(0)'''
+				
+				if doc in qrel[query] and qrel[query][doc] == 1:
+					token = bert_tokens(query_text, title_text)
+					X_rel.append(token)
+					y.append(1)
+				elif len(X_rel) > len(X_irr):
+					token = bert_tokens(query_text, title_text)
+					X_irr.append(token)
 
-#X_train, X_val, y_train, y_val = train_test_split(X, y, test_size = 0.1, stratify = y)
+	#X = np.asarray(X_rel)
+	X_rel = np.asarray(X_rel)
+	X_irr = np.asarray(X_irr)
+	y = np.asarray(y)
 
-X = np.asarray(X_rel)
-X_rel = np.asarray(X_rel)
-X_irr = np.asarray(X_irr)
-y = np.asarray(y)
-input_shape = X_rel.shape[1]
+	return X_rel, X_irr, y
 
-BATCH_SIZE = 128
-EPOCHS = 30
 
-#Score Model
-#score_model = score_model()
-#score_model.compile(optimizer = 'adam', loss = 'mean_squared_error', metrics = ['accuracy'])
-#score_model.fit(X, y, batch_size = BATCH_SIZE, epochs = EPOCHS, validation_split = 0.1)
 
-#Rank Model
-rank_model = rank_model(input_shape)
-rank_model.compile(optimizer = 'adam', loss = 'hinge', metrics = ['accuracy'])
-rank_model.fit([X_rel, X_irr], y, batch_size = BATCH_SIZE, epochs = EPOCHS, validation_split = 0.1)
+if __name__ == '__main__':
+    
+	DOCS_RETURNED = 50
+	topics = ['2002', '2003', '2004']
+
+	X_rel, X_irr, y = training_set(DOCS_RETURNED, topics)
+	input_shape = X_rel.shape[1]
+
+	BATCH_SIZE = 128
+	EPOCHS = 30
+
+	#Score Model
+	#score_model = score_model()
+	#score_model.compile(optimizer = 'adam', loss = 'mean_squared_error', metrics = ['accuracy'])
+	#score_model.fit(X, y, batch_size = BATCH_SIZE, epochs = EPOCHS, validation_split = 0.1)
+
+	#Rank Model
+	rank_model = rank_model(input_shape)
+	rank_model.compile(optimizer = 'adam', loss = 'hinge', metrics = ['accuracy'])
+	rank_model.fit([X_rel, X_irr], y, batch_size = BATCH_SIZE, epochs = EPOCHS, validation_split = 0.1)
